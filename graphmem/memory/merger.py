@@ -1,8 +1,11 @@
 import logging
+import re
 from typing import Optional, List, Dict, Any
 from rapidfuzz import fuzz
 from graphmem.graph.models import Node
 from graphmem.graph.store import GraphStore
+from graphmem.core.config import settings
+from graphmem.core.ollama_client import OllamaClient
 
 logger = logging.getLogger(__name__)
 
@@ -10,51 +13,99 @@ class NodeMerger:
     """
     Handles entity resolution and confidence scoring.
     """
-    def __init__(self, store: GraphStore, similarity_threshold: float = 80.0):
+    def __init__(self, store: GraphStore, client: Optional[OllamaClient] = None):
         self.store = store
-        self.similarity_threshold = similarity_threshold
-        self.initial_confidence = 0.6
-        self.corroboration_bonus = 0.1
-        self.max_confidence = 0.95
+        self.client = client or OllamaClient()
+        self.similarity_threshold = settings.similarity_threshold
+        self.exact_similarity_threshold = settings.exact_similarity_threshold
+        self.initial_confidence = settings.initial_confidence
+        self.doc_corroboration_bonus = settings.doc_corroboration_bonus
+        self.chunk_corroboration_bonus = settings.chunk_corroboration_bonus
+        self.max_confidence = settings.max_confidence
+        self.use_llm_disambiguation = settings.use_llm_disambiguation
 
-    def find_best_match(self, name: str, label: str) -> Optional[Node]:
+    def _strip_stop_words(self, name: str) -> str:
+        """
+        Strips common stop words and generic entity indicators to compare core names.
+        e.g., 'The University of California' -> 'university california'
+        e.g., 'New York City' -> 'new york'
+        """
+        words = re.findall(r'\b\w+\b', name.lower())
+        stop_words = {
+            "the", "of", "and", "a", "an", "in", "on", "at", "for", "with", "by", "to", 
+            "co", "corp", "inc", "ltd", "gmbh", "limited", "company", "organization", "group", "city"
+        }
+        filtered_words = [w for w in words if w not in stop_words]
+        return " ".join(filtered_words) if filtered_words else name.lower()
+
+    async def find_best_match(self, name: str, label: str) -> Optional[Node]:
         """
         Finds the best existing node for a given name and label.
-        Uses exact match first, then fuzzy matching.
+        Uses exact match first, then fuzzy matching with stop-word stripping and LLM adjudication.
         """
-        # 1. Try exact normalized match first
         potential_nodes = self.store.find_nodes_by_label(label)
-        
         normalized_name = name.lower().strip()
         
-        # Exact match check
+        # 1. Exact match check
         for node in potential_nodes:
             if node.name.lower().strip() == normalized_name:
                 return node
         
         # 2. Fuzzy match check
-        best_score = 0
+        stripped_name = self._strip_stop_words(name)
+        best_score = 0.0
         best_node = None
         
         for node in potential_nodes:
-            # WRatio is a weighted ratio that handles different lengths and common variations well
-            score = fuzz.WRatio(normalized_name, node.name.lower().strip())
-            logger.debug(f"Matching '{name}' with '{node.name}': Score {score}")
+            stripped_node_name = self._strip_stop_words(node.name)
+            # WRatio is a weighted ratio that handles different lengths well
+            score = fuzz.WRatio(stripped_name, stripped_node_name)
+            logger.debug(f"Matching '{name}' (stripped: '{stripped_name}') with '{node.name}' (stripped: '{stripped_node_name}'): Score {score}")
             if score > best_score and score >= self.similarity_threshold:
                 best_score = score
                 best_node = node
                 
         if best_node:
-            logger.info(f"Fuzzy merge: '{name}' matched with existing '{best_node.name}' (Score: {best_score})")
+            # Safe match above the exact similarity threshold
+            if best_score >= self.exact_similarity_threshold:
+                logger.info(f"Fuzzy merge (Safe): '{name}' matched with existing '{best_node.name}' (Score: {best_score})")
+                return best_node
             
-        return best_node
+            # Borderline match: run LLM adjudication
+            if self.use_llm_disambiguation:
+                logger.info(f"Fuzzy merge (Borderline): '{name}' matched with '{best_node.name}' (Score: {best_score}). Running LLM adjudication...")
+                prompt = f"""Compare these two entity names of the same label and decide if they refer to the same real-world entity.
 
-    def merge_or_create(self, name: str, label: str, properties: Dict[str, Any], source_id: str) -> Node:
+Entity A:
+{name}
+
+Entity B:
+{best_node.name}
+
+If they represent the same real-world entity (even with minor spelling variations, spacing, punctuation, or abbreviation differences, such as 'OpenAI' and 'Open AI'), respond with 'SAME'.
+If they are distinct real-world entities (such as 'New York City' and 'Oklahoma City', or 'Apple' and 'Pineapple'), respond with 'DIFFERENT'.
+
+Respond with ONLY the word 'SAME' or 'DIFFERENT'. Do not include any explanation or extra text."""
+                try:
+                    response = await self.client.generate(prompt)
+                    output = response.get("response", "").strip().upper()
+                    is_same = "SAME" in output and "DIFFERENT" not in output
+                    logger.info(f"LLM Adjudication result for '{name}' vs '{best_node.name}': {output} (Parsed: same={is_same})")
+                    if is_same:
+                        return best_node
+                except Exception as e:
+                    logger.error(f"LLM adjudication failed for '{name}' vs '{best_node.name}': {str(e)}")
+            else:
+                logger.info(f"Fuzzy merge (Borderline): '{name}' matched with '{best_node.name}' (Score: {best_score}) but LLM adjudication is disabled.")
+            
+        return None
+
+    async def merge_or_create(self, name: str, label: str, properties: Dict[str, Any], source_id: str) -> Node:
         """
         Resolves an extracted entity to an existing node or creates a new one.
-        Updates confidence based on the number of unique sources.
+        Updates confidence based on the number of unique documents and chunks.
         """
-        existing_node = self.find_best_match(name, label)
+        existing_node = await self.find_best_match(name, label)
         
         if existing_node:
             # Update properties
@@ -63,12 +114,31 @@ class NodeMerger:
             # Update sources and confidence
             if source_id not in existing_node.sources:
                 existing_node.sources.append(source_id)
-                # Recalculate confidence: 0.6 + (extra_sources * 0.1)
-                extra_sources = len(existing_node.sources) - 1
-                new_confidence = min(self.initial_confidence + (extra_sources * self.corroboration_bonus), self.max_confidence)
+                
+                # Count unique documents and unique chunks
+                unique_docs = set()
+                for src in existing_node.sources:
+                    if "#chunk_" in src:
+                        doc_id = src.split("#chunk_")[0]
+                    else:
+                        doc_id = src
+                    unique_docs.add(doc_id)
+                
+                num_docs = len(unique_docs)
+                num_chunks = len(existing_node.sources)
+                
+                extra_docs = max(0, num_docs - 1)
+                extra_chunks = max(0, num_chunks - num_docs)
+                
+                new_confidence = min(
+                    self.initial_confidence + 
+                    (extra_docs * self.doc_corroboration_bonus) + 
+                    (extra_chunks * self.chunk_corroboration_bonus),
+                    self.max_confidence
+                )
                 
                 if new_confidence > existing_node.confidence:
-                    logger.info(f"Confidence boost for '{existing_node.name}': {existing_node.confidence:.2f} -> {new_confidence:.2f}")
+                    logger.info(f"Confidence boost for '{existing_node.name}': {existing_node.confidence:.2f} -> {new_confidence:.2f} (Docs: {num_docs}, Chunks: {num_chunks})")
                     existing_node.confidence = new_confidence
             
             return existing_node

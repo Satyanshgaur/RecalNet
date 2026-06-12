@@ -19,6 +19,15 @@ class Settings(BaseSettings):
     retrieval_confidence_threshold: float = 0.7
     memory_consolidation_threshold: float = 0.5
     
+    # Merging & Corroboration settings
+    initial_confidence: float = 0.6
+    doc_corroboration_bonus: float = 0.15
+    chunk_corroboration_bonus: float = 0.05
+    max_confidence: float = 0.95
+    similarity_threshold: float = 70.0
+    exact_similarity_threshold: float = 95.0
+    use_llm_disambiguation: bool = True
+    
     # General API / System settings
     api_host: str = "0.0.0.0"
     api_port: int = 8000

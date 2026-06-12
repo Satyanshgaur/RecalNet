@@ -97,9 +97,10 @@ class DocumentIngester:
         for i, chunk in enumerate(chunks):
             logger.info(f"Processing chunk {i+1}/{len(chunks)}...")
             extraction = await self.extractor.extract(chunk)
-            self._merge_extraction(extraction, source_id)
+            chunk_source_id = f"{source_id}#chunk_{i}"
+            await self._merge_extraction(extraction, chunk_source_id)
 
-    def _merge_extraction(self, extraction: Dict[str, Any], source_id: str) -> None:
+    async def _merge_extraction(self, extraction: Dict[str, Any], source_id: str) -> None:
         """
         Merges extracted entities and relations into the GraphStore.
         """
@@ -113,7 +114,7 @@ class DocumentIngester:
             if not name or not label:
                 continue
 
-            node = self.merger.merge_or_create(
+            node = await self.merger.merge_or_create(
                 name=name,
                 label=label,
                 properties=ent_data.get("properties", {}),

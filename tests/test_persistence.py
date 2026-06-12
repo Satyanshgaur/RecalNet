@@ -67,9 +67,9 @@ def test_persistence():
     assert "FOUNDED" in relations
     assert "CEO_OF" in relations
 
-    print("\n✓ PERSISTENCE VERIFIED!")
-    print("✓ 4 nodes and 4 edges preserved.")
-    print("✓ Metadata and properties preserved.")
+    print("\nOK: PERSISTENCE VERIFIED!")
+    print("OK: 4 nodes and 4 edges preserved.")
+    print("OK: Metadata and properties preserved.")
     
     # Cleanup
     if db_file.exists():

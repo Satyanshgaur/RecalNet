@@ -34,12 +34,12 @@ def test_manual_graph():
     found_elon = store.find_nodes_by_name("Elon Musk")
     assert len(found_elon) == 1
     assert found_elon[0].label == "Person"
-    print("✓ find_nodes_by_name verified.")
+    print("OK: find_nodes_by_name verified.")
 
     # Find nodes by label
     companies = store.find_nodes_by_label("Company")
     assert len(companies) == 2
-    print(f"✓ find_nodes_by_label verified ({len(companies)} companies).")
+    print(f"OK: find_nodes_by_label verified ({len(companies)} companies).")
 
     # Get neighbors for Elon Musk
     elon_neighbors = store.get_neighbors(elon.id)
@@ -47,7 +47,7 @@ def test_manual_graph():
     relations = [n["edge"].relation for n in elon_neighbors]
     assert "FOUNDED" in relations
     assert "CEO_OF" in relations
-    print(f"✓ get_neighbors verified for {elon.name}: {[r for r in relations]}")
+    print(f"OK: get_neighbors verified for {elon.name}: {[r for r in relations]}")
 
     # Get neighbors for California (Inbound)
     ca_neighbors = store.get_neighbors(california.id)
@@ -55,7 +55,7 @@ def test_manual_graph():
     inbound_names = [n["node"].name for n in ca_neighbors if n["direction"] == "inbound"]
     assert "SpaceX" in inbound_names
     assert "Tesla" in inbound_names
-    print(f"✓ Inbound neighbors verified for {california.name}: {inbound_names}")
+    print(f"OK: Inbound neighbors verified for {california.name}: {inbound_names}")
 
     print("\nALL MANUAL GRAPH TESTS PASSED!")
 

@@ -11,6 +11,7 @@ class Node(BaseModel):
     id: UUID = Field(default_factory=uuid4)
     label: str  # e.g., "Person", "Company", "Location"
     name: str   # e.g., "Elon Musk"
+    aliases: List[str] = Field(default_factory=list)
     properties: Dict[str, Any] = Field(default_factory=dict)
     confidence: float = 1.0
     created_at: datetime = Field(default_factory=datetime.utcnow)

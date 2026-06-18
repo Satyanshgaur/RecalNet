@@ -16,6 +16,27 @@ ONTOLOGY_RELATIONS = {
     "CHILD_OF", "SIBLING_OF", "OTHER"
 }
 
+# Predefined standard entity labels
+ONTOLOGY_LABELS = {
+    "Person", "Organization", "Location", "Event", "Document", 
+    "Product", "Achievement", "EducationalInstitution", "CreativeWork", "Other"
+}
+
+LABEL_MAPPINGS = {
+    "School": "EducationalInstitution",
+    "College": "EducationalInstitution",
+    "University": "EducationalInstitution",
+    "Academy": "EducationalInstitution",
+    "Educational Institution": "EducationalInstitution",
+    "Album": "CreativeWork",
+    "Book": "CreativeWork",
+    "Movie": "CreativeWork",
+    "Song": "CreativeWork",
+    "Film": "CreativeWork",
+    "Television Series": "CreativeWork",
+    "TV Show": "CreativeWork",
+}
+
 # Predefined synonym mapping for fast mapping
 SYNONYM_MAPPINGS = {
     # LOCATED_IN
@@ -104,6 +125,35 @@ class Extractor:
     def __init__(self, client: Optional[OllamaClient] = None):
         self.client = client or OllamaClient()
 
+    def normalize_label(self, label: str) -> str:
+        """
+        Normalizes an entity label to the closest ontology label.
+        """
+        if not label:
+            return "Other"
+        title_case = label.strip().title()
+        if title_case in ONTOLOGY_LABELS:
+            return title_case
+        if title_case in LABEL_MAPPINGS:
+            return LABEL_MAPPINGS[title_case]
+        # Try compact format without spaces too
+        compact = title_case.replace(" ", "")
+        if compact in ONTOLOGY_LABELS:
+            return compact
+        if compact in LABEL_MAPPINGS:
+            return LABEL_MAPPINGS[compact]
+            
+        best_score = 0.0
+        best_match = None
+        for ont_label in ONTOLOGY_LABELS:
+            if ont_label == "Other":
+                continue
+            score = fuzz.ratio(title_case.lower(), ont_label.lower())
+            if score > best_score and score >= 80.0:
+                best_score = score
+                best_match = ont_label
+        return best_match if best_match else "Other"
+
     def normalize_relation(self, relation: str) -> tuple[str, Dict[str, Any]]:
         """
         Normalizes a relation string to the closest ontology relation.
@@ -154,6 +204,11 @@ class Extractor:
             raw_output = response.get("response", "")
             result = self.parse_extraction_output(raw_output)
             
+            # Post-process entities to normalize labels
+            if "entities" in result:
+                for ent_data in result["entities"]:
+                    ent_data["label"] = self.normalize_label(ent_data.get("label", ""))
+
             # Post-process relations to normalize them
             if "relations" in result:
                 for rel_data in result["relations"]:

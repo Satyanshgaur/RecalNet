@@ -9,6 +9,8 @@ from graphmem.core.ollama_client import OllamaClient
 
 logger = logging.getLogger(__name__)
 
+GLOBAL_ALIASES = {}
+
 class NodeMerger:
     """
     Handles entity resolution and confidence scoring.
@@ -41,26 +43,40 @@ class NodeMerger:
     async def find_best_match(self, name: str, label: str) -> Optional[Node]:
         """
         Finds the best existing node for a given name and label.
-        Uses exact match first, then fuzzy matching with stop-word stripping and LLM adjudication.
+        Pipeline: Label Compatibility -> Alias Detection -> Fuzzy -> LLM Adjudication
         """
+        # 1. Label Compatibility (Only compare against matching canonical labels)
         potential_nodes = self.store.find_nodes_by_label(label)
+        
         normalized_name = name.lower().strip()
         
-        # 1. Exact match check
+        # Look up canonical name from GLOBAL_ALIASES if any
+        lookup_name = name.strip()
+        if lookup_name in GLOBAL_ALIASES:
+            lookup_name = GLOBAL_ALIASES[lookup_name]
+        normalized_lookup = lookup_name.lower().strip()
+        
+        # 2. Alias Detection (Check name, aliases, or global canonical mapping)
         for node in potential_nodes:
+            if node.name.lower().strip() == normalized_lookup:
+                return node
             if node.name.lower().strip() == normalized_name:
                 return node
+            # Check dynamic aliases list stored on node
+            for alias in getattr(node, "aliases", []):
+                if alias.lower().strip() == normalized_name:
+                    logger.info(f"Alias Detection hit: '{name}' instantly resolved to existing node '{node.name}' via aliases list.")
+                    return node
         
-        # 2. Fuzzy match check
-        stripped_name = self._strip_stop_words(name)
+        # 3. Fuzzy match check
+        stripped_name = self._strip_stop_words(lookup_name)
         best_score = 0.0
         best_node = None
         
         for node in potential_nodes:
             stripped_node_name = self._strip_stop_words(node.name)
-            # WRatio is a weighted ratio that handles different lengths well
             score = fuzz.WRatio(stripped_name, stripped_node_name)
-            logger.debug(f"Matching '{name}' (stripped: '{stripped_name}') with '{node.name}' (stripped: '{stripped_node_name}'): Score {score}")
+            logger.debug(f"Matching '{lookup_name}' with '{node.name}': Score {score}")
             if score > best_score and score >= self.similarity_threshold:
                 best_score = score
                 best_node = node
@@ -69,6 +85,8 @@ class NodeMerger:
             # Safe match above the exact similarity threshold
             if best_score >= self.exact_similarity_threshold:
                 logger.info(f"Fuzzy merge (Safe): '{name}' matched with existing '{best_node.name}' (Score: {best_score})")
+                if name not in best_node.aliases and name != best_node.name:
+                    best_node.aliases.append(name)
                 return best_node
             
             # Borderline match: run LLM adjudication
@@ -92,6 +110,8 @@ Respond with ONLY the word 'SAME' or 'DIFFERENT'. Do not include any explanation
                     is_same = "SAME" in output and "DIFFERENT" not in output
                     logger.info(f"LLM Adjudication result for '{name}' vs '{best_node.name}': {output} (Parsed: same={is_same})")
                     if is_same:
+                        if name not in best_node.aliases and name != best_node.name:
+                            best_node.aliases.append(name)
                         return best_node
                 except Exception as e:
                     logger.error(f"LLM adjudication failed for '{name}' vs '{best_node.name}': {str(e)}")

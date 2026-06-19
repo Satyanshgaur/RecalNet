@@ -40,13 +40,53 @@ class NodeMerger:
         filtered_words = [w for w in words if w not in stop_words]
         return " ".join(filtered_words) if filtered_words else name.lower()
 
+    def get_compatible_labels(self, label: str) -> List[str]:
+        """Get list of labels that are semantically compatible with the target label."""
+        groups = [
+            {"Organization", "EducationalInstitution", "Location"},
+            {"CreativeWork", "Product", "Other"},
+        ]
+        compat = {label}
+        for g in groups:
+            if label in g:
+                compat.update(g)
+        return list(compat)
+
+    def promote_label(self, label_a: str, label_b: str) -> str:
+        """Promotes the entity's label to the more specific canonical label."""
+        preference = [
+            "Other",
+            "Location",
+            "Organization",
+            "EducationalInstitution",
+            "Product",
+            "CreativeWork",
+            "Person",
+            "Event",
+            "Document",
+            "Achievement"
+        ]
+        try:
+            idx_a = preference.index(label_a)
+        except ValueError:
+            idx_a = -1
+        try:
+            idx_b = preference.index(label_b)
+        except ValueError:
+            idx_b = -1
+            
+        return label_a if idx_a >= idx_b else label_b
+
     async def find_best_match(self, name: str, label: str) -> Optional[Node]:
         """
         Finds the best existing node for a given name and label.
         Pipeline: Label Compatibility -> Alias Detection -> Fuzzy -> LLM Adjudication
         """
-        # 1. Label Compatibility (Only compare against matching canonical labels)
-        potential_nodes = self.store.find_nodes_by_label(label)
+        # 1. Label Compatibility (Only compare against matching or compatible labels)
+        compatible_labels = self.get_compatible_labels(label)
+        potential_nodes = []
+        for cl in compatible_labels:
+            potential_nodes.extend(self.store.find_nodes_by_label(cl))
         
         normalized_name = name.lower().strip()
         
@@ -128,6 +168,14 @@ Respond with ONLY the word 'SAME' or 'DIFFERENT'. Do not include any explanation
         existing_node = await self.find_best_match(name, label)
         
         if existing_node:
+            # Promote label if necessary (e.g., Organization -> EducationalInstitution)
+            promoted_label = self.promote_label(existing_node.label, label)
+            if promoted_label != existing_node.label:
+                logger.info(f"Promoting label of node '{existing_node.name}': {existing_node.label} -> {promoted_label}")
+                existing_node.label = promoted_label
+                # Also update in NetworkX graph node attributes
+                self.store.graph.nodes[existing_node.id]["label"] = promoted_label
+            
             # Update properties
             existing_node.properties.update(properties)
             
@@ -174,3 +222,4 @@ Respond with ONLY the word 'SAME' or 'DIFFERENT'. Do not include any explanation
             self.store.add_node(new_node)
             logger.info(f"Created new node: '{name}' ({label})")
             return new_node
+

@@ -7,6 +7,7 @@ from graphmem.graph.models import Node, Edge, Episode
 from graphmem.graph.store import GraphStore
 from graphmem.agents.extractor import Extractor
 from graphmem.memory.merger import NodeMerger
+from graphmem.memory.ontology import OntologyNormalizer
 
 logger = logging.getLogger(__name__)
 
@@ -66,6 +67,7 @@ class DocumentIngester:
         self.store = store
         self.extractor = extractor or Extractor()
         self.merger = NodeMerger(store)
+        self.ontology_normalizer = OntologyNormalizer()
         # 512 tokens ~ 2000 chars, 64 tokens ~ 250 chars
         self.splitter = SimpleRecursiveSplitter(chunk_size=2000, chunk_overlap=250)
 
@@ -120,9 +122,12 @@ class DocumentIngester:
             if not name or not label:
                 continue
 
+            # Run Ontology Normalization Layer before entity resolution
+            normalized_label = self.ontology_normalizer.normalize(label)
+
             node = await self.merger.merge_or_create(
                 name=name,
-                label=label,
+                label=normalized_label,
                 properties=ent_data.get("properties", {}),
                 source_id=f"{episode.document_id}#{episode.chunk_id}"
             )

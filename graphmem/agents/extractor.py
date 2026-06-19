@@ -154,30 +154,8 @@ class Extractor:
         """
         Normalizes an entity label to the closest ontology label.
         """
-        if not label:
-            return "Other"
-        title_case = label.strip().title()
-        if title_case in ONTOLOGY_LABELS:
-            return title_case
-        if title_case in LABEL_MAPPINGS:
-            return LABEL_MAPPINGS[title_case]
-        # Try compact format without spaces too
-        compact = title_case.replace(" ", "")
-        if compact in ONTOLOGY_LABELS:
-            return compact
-        if compact in LABEL_MAPPINGS:
-            return LABEL_MAPPINGS[compact]
-            
-        best_score = 0.0
-        best_match = None
-        for ont_label in ONTOLOGY_LABELS:
-            if ont_label == "Other":
-                continue
-            score = fuzz.ratio(title_case.lower(), ont_label.lower())
-            if score > best_score and score >= 80.0:
-                best_score = score
-                best_match = ont_label
-        return best_match if best_match else "Other"
+        from graphmem.memory.ontology import OntologyNormalizer
+        return OntologyNormalizer().normalize(label)
 
     def normalize_relation(self, relation: str) -> tuple[str, Dict[str, Any]]:
         """

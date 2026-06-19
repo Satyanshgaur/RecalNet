@@ -3,7 +3,7 @@ from typing import List, Optional, Dict, Any
 from pathlib import Path
 from uuid import uuid4
 
-from graphmem.graph.models import Node, Edge
+from graphmem.graph.models import Node, Edge, Episode
 from graphmem.graph.store import GraphStore
 from graphmem.agents.extractor import Extractor
 from graphmem.memory.merger import NodeMerger
@@ -96,11 +96,17 @@ class DocumentIngester:
         
         for i, chunk in enumerate(chunks):
             logger.info(f"Processing chunk {i+1}/{len(chunks)}...")
+            episode = Episode(
+                document_id=source_id,
+                chunk_id=f"chunk_{i}",
+                raw_text=chunk
+            )
+            self.store.add_episode(episode)
+            
             extraction = await self.extractor.extract(chunk)
-            chunk_source_id = f"{source_id}#chunk_{i}"
-            await self._merge_extraction(extraction, chunk_source_id)
+            await self._merge_extraction(extraction, episode)
 
-    async def _merge_extraction(self, extraction: Dict[str, Any], source_id: str) -> None:
+    async def _merge_extraction(self, extraction: Dict[str, Any], episode: Episode) -> None:
         """
         Merges extracted entities and relations into the GraphStore.
         """
@@ -118,9 +124,10 @@ class DocumentIngester:
                 name=name,
                 label=label,
                 properties=ent_data.get("properties", {}),
-                source_id=source_id
+                source_id=f"{episode.document_id}#{episode.chunk_id}"
             )
             name_to_id[name] = node.id
+            self.store.add_node_mention(node.id, episode.id)
 
         # 2. Process Relations
         for rel_data in extraction.get("relations", []):
@@ -144,10 +151,72 @@ class DocumentIngester:
                 if found: target_id_node = found[0].id
                 
             if source_id_node and target_id_node:
-                edge = Edge(
-                    source_node_id=source_id_node,
-                    target_node_id=target_id_node,
-                    relation=relation,
-                    properties=rel_data.get("properties", {})
-                )
-                self.store.add_edge(edge)
+                # Track mentions for source and target node when a relation exists
+                self.store.add_node_mention(source_id_node, episode.id)
+                self.store.add_node_mention(target_id_node, episode.id)
+
+                # Compute evidence reference character offsets
+                evidence_text = rel_data.get("evidence", "")
+                evidence_reference = None
+                if evidence_text:
+                    start_idx = episode.raw_text.find(evidence_text)
+                    if start_idx == -1:
+                        # Case insensitive check
+                        start_idx = episode.raw_text.lower().find(evidence_text.lower())
+                    
+                    if start_idx != -1:
+                        evidence_reference = {
+                            "episode_id": episode.id,
+                            "start_char": start_idx,
+                            "end_char": start_idx + len(evidence_text)
+                        }
+                    else:
+                        # Fallback to full raw text bounds
+                        evidence_reference = {
+                            "episode_id": episode.id,
+                            "start_char": 0,
+                            "end_char": len(episode.raw_text)
+                        }
+
+                # Check for existing identical edge (directional match)
+                existing_edge = None
+                if self.store.graph.has_edge(source_id_node, target_id_node):
+                    edge_dict = self.store.graph.get_edge_data(source_id_node, target_id_node)
+                    for edge_id, attr in edge_dict.items():
+                        edge_obj: Edge = attr["data"]
+                        if edge_obj.relation == relation:
+                            existing_edge = edge_obj
+                            break
+
+                from graphmem.core.config import settings
+                if existing_edge:
+                    # Update supporting episodes and count
+                    if episode.id not in existing_edge.supporting_episode_ids:
+                        existing_edge.supporting_episode_ids.append(episode.id)
+                        existing_edge.support_count += 1
+                        # Corroboration boost for edge confidence
+                        existing_edge.confidence = min(
+                            existing_edge.confidence + settings.chunk_corroboration_bonus,
+                            settings.max_confidence
+                        )
+                    # Merge properties, fact statement, and evidence reference
+                    existing_edge.properties.update(rel_data.get("properties", {}))
+                    if not existing_edge.fact and rel_data.get("fact"):
+                        existing_edge.fact = rel_data.get("fact")
+                    if not existing_edge.evidence_reference and evidence_reference:
+                        existing_edge.evidence_reference = evidence_reference
+                else:
+                    # Create new edge
+                    edge = Edge(
+                        source_node_id=source_id_node,
+                        target_node_id=target_id_node,
+                        relation=relation,
+                        confidence=settings.initial_confidence,
+                        fact=rel_data.get("fact"),
+                        supporting_episode_ids=[episode.id],
+                        support_count=1,
+                        evidence_reference=evidence_reference,
+                        properties=rel_data.get("properties", {})
+                    )
+                    self.store.add_edge(edge)
+

@@ -94,9 +94,12 @@ You are an expert knowledge graph extractor. Your task is to identify key entiti
    - You MUST classify and map all relationships to one of the following standard RELATION ONTOLOGY TYPES (in uppercase snake_case):
      * ACTED_IN, PRODUCED, DIRECTED, FOUNDED, CEO_OF, LOCATED_IN, WORKS_AT, PARTNER_OF, MEMBER_OF, SUBSIDIARY_OF, DEVELOPED, LEADS, BORN_IN, DIED_IN, CITIZEN_OF, AWARDED, MARRIED_TO, CHILD_OF, SIBLING_OF
      * If no standard category fits, use OTHER.
-3. **Properties**: Extract relevant properties (e.g., roles, dates, specific locations).
-4. **Consistency**: Normalize entity names based on the text.
-5. **No Hallucination**: ONLY extract information present in the text. Do NOT add entities from your training data that aren't mentioned.
+3. **Fact Summary & Evidence**:
+   - **fact**: A natural language sentence summarizing the relationship (e.g., "Elon Musk founded SpaceX").
+   - **evidence**: The exact sentence or phrase from the input text that supports the relationship (e.g., "SpaceX was founded by Elon Musk in 2002.").
+4. **Properties**: Extract relevant properties (e.g., roles, dates, specific locations).
+5. **Consistency**: Normalize entity names based on the text.
+6. **No Hallucination**: ONLY extract information present in the text. Do NOT add entities from your training data that aren't mentioned.
 
 ### EXAMPLES:
 
@@ -110,12 +113,34 @@ You are an expert knowledge graph extractor. Your task is to identify key entiti
     {"name": "California", "label": "Location", "properties": {}}
   ],
   "relations": [
-    {"source": "Elon Musk", "target": "SpaceX", "relation": "FOUNDED", "properties": {"year": 2002}},
-    {"source": "SpaceX", "target": "Hawthorne", "relation": "LOCATED_IN", "properties": {}},
-    {"source": "Hawthorne", "target": "California", "relation": "LOCATED_IN", "properties": {}}
+    {
+      "source": "Elon Musk",
+      "target": "SpaceX",
+      "relation": "FOUNDED",
+      "fact": "Elon Musk founded SpaceX",
+      "evidence": "SpaceX was founded by Elon Musk in 2002.",
+      "properties": {"year": 2002}
+    },
+    {
+      "source": "SpaceX",
+      "target": "Hawthorne",
+      "relation": "LOCATED_IN",
+      "fact": "SpaceX is located in Hawthorne",
+      "evidence": "It is headquartered in Hawthorne, California.",
+      "properties": {}
+    },
+    {
+      "source": "Hawthorne",
+      "target": "California",
+      "relation": "LOCATED_IN",
+      "fact": "Hawthorne is in California",
+      "evidence": "It is headquartered in Hawthorne, California.",
+      "properties": {}
+    }
   ]
 }
 """
+
 
 class Extractor:
     """
@@ -199,7 +224,10 @@ class Extractor:
             response = await self.client.generate(
                 prompt, 
                 system=EXTRACTION_SYSTEM_PROMPT,
-                format="json"
+                format="json",
+                options={
+                    "temperature": 0.0
+                }
             )
             raw_output = response.get("response", "")
             result = self.parse_extraction_output(raw_output)

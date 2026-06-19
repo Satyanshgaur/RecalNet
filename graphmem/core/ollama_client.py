@@ -21,11 +21,11 @@ class OllamaClient:
         self,
         base_url: Optional[str] = None,
         model: Optional[str] = None,
-        timeout: float = 60.0,
+        timeout: Optional[float] = None,
     ):
         self.base_url = (base_url or settings.ollama_url).rstrip("/")
         self.model = model or settings.model_name
-        self.timeout = timeout
+        self.timeout = timeout if timeout is not None else settings.ollama_timeout
         self.client = httpx.AsyncClient(base_url=self.base_url, timeout=self.timeout)
 
     @retry(

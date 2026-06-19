@@ -7,6 +7,7 @@ class Settings(BaseSettings):
     # Ollama Configuration
     ollama_url: str = "http://localhost:11434"
     model_name: str = "qwen2.5:7b"
+    ollama_timeout: float = 120.0
     
     # Embedding Configuration
     embedding_model_name: str = "all-MiniLM-L6-v2"

@@ -31,7 +31,26 @@ async def test_ingester():
         elon = elon_nodes[0]
         neighbors = store.get_neighbors(elon.id)
         print(f"Elon's relationships: {[n['edge'].relation for n in neighbors]}")
-        print(f"Elon's sources: {elon.sources}")
+        
+        # Verify explain_node
+        node_explanation = store.explain_node(elon.id)
+        print(f"Elon Musk mentioned in {len(node_explanation['mentioned_in'])} episodes:")
+        for ep in node_explanation["mentioned_in"]:
+            print(f"  - Episode ID: {ep.id} ({ep.document_id}#{ep.chunk_id})")
+        
+        # Verify explain_edge
+        for nbr in neighbors:
+            edge = nbr["edge"]
+            edge_explanation = store.explain_edge(edge.id)
+            print(f"\nExplain Edge ({elon.name} -{edge.relation}-> {nbr['node'].name}):")
+            print(f"  Fact: {edge_explanation['fact']}")
+            print(f"  Confidence: {edge_explanation['confidence']:.2f}")
+            print(f"  Support Count: {edge.support_count}")
+            if edge.evidence_reference:
+                ref = edge.evidence_reference
+                print(f"  Evidence Reference: Episode {ref['episode_id']} (chars {ref['start_char']}-{ref['end_char']})")
+                evidence_text = store.get_episode(ref['episode_id']).raw_text[ref['start_char']:ref['end_char']]
+                print(f"    Text: \"{evidence_text}\"")
 
     # Check for Texas/Florida
     texas = store.find_nodes_by_name("Texas")
@@ -40,3 +59,4 @@ async def test_ingester():
 
 if __name__ == "__main__":
     asyncio.run(test_ingester())
+

@@ -8,6 +8,7 @@ from graphmem.graph.store import GraphStore
 from graphmem.agents.extractor import Extractor
 from graphmem.memory.merger import NodeMerger
 from graphmem.memory.ontology import OntologyNormalizer
+from graphmem.memory.validation import RelationValidator
 
 logger = logging.getLogger(__name__)
 
@@ -156,6 +157,20 @@ class DocumentIngester:
                 if found: target_id_node = found[0].id
                 
             if source_id_node and target_id_node:
+                # Perform Relation Validation Layer check before edge setup
+                source_node = self.store.get_node(source_id_node)
+                target_node = self.store.get_node(target_id_node)
+                
+                if not RelationValidator.validate(
+                    source_node.label,
+                    relation,
+                    target_node.label,
+                    evidence_text=rel_data.get("evidence"),
+                    fact=rel_data.get("fact")
+                ):
+                    logger.info(f"Skipping invalid relation: {source_node.name} ({source_node.label}) --[{relation}]--> {target_node.name} ({target_node.label})")
+                    continue
+
                 # Track mentions for source and target node when a relation exists
                 self.store.add_node_mention(source_id_node, episode.id)
                 self.store.add_node_mention(target_id_node, episode.id)

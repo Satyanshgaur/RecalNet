@@ -161,13 +161,20 @@ class DocumentIngester:
                 source_node = self.store.get_node(source_id_node)
                 target_node = self.store.get_node(target_id_node)
                 
-                if not RelationValidator.validate(
-                    source_node.label,
-                    relation,
-                    target_node.label,
-                    evidence_text=rel_data.get("evidence"),
-                    fact=rel_data.get("fact")
-                ):
+                fact = rel_data.get("fact")
+                evidence_text = rel_data.get("evidence")
+                
+                is_valid, conf_multiplier = RelationValidator.validate(
+                    source_name=source_node.name,
+                    source_label=source_node.label,
+                    target_name=target_node.name,
+                    target_label=target_node.label,
+                    relation=relation,
+                    evidence_text=evidence_text,
+                    fact=fact
+                )
+                
+                if not is_valid:
                     logger.info(f"Skipping invalid relation: {source_node.name} ({source_node.label}) --[{relation}]--> {target_node.name} ({target_node.label})")
                     continue
 
@@ -214,9 +221,9 @@ class DocumentIngester:
                     if episode.id not in existing_edge.supporting_episode_ids:
                         existing_edge.supporting_episode_ids.append(episode.id)
                         existing_edge.support_count += 1
-                        # Corroboration boost for edge confidence
+                        # Corroboration boost for edge confidence, scaled by penalty multiplier
                         existing_edge.confidence = min(
-                            existing_edge.confidence + settings.chunk_corroboration_bonus,
+                            existing_edge.confidence + (settings.chunk_corroboration_bonus * conf_multiplier),
                             settings.max_confidence
                         )
                     # Merge properties, fact statement, and evidence reference
@@ -226,12 +233,12 @@ class DocumentIngester:
                     if not existing_edge.evidence_reference and evidence_reference:
                         existing_edge.evidence_reference = evidence_reference
                 else:
-                    # Create new edge
+                    # Create new edge with confidence adjusted by validation penalty multiplier
                     edge = Edge(
                         source_node_id=source_id_node,
                         target_node_id=target_id_node,
                         relation=relation,
-                        confidence=settings.initial_confidence,
+                        confidence=settings.initial_confidence * conf_multiplier,
                         fact=rel_data.get("fact"),
                         supporting_episode_ids=[episode.id],
                         support_count=1,
